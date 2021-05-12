@@ -1,3 +1,4 @@
 fontgen
 *.a
 *.o
+*.bin

@@ -12,6 +12,29 @@ extern "C" {
                  req_comp: i32) -> *mut c_uchar;
 }
 
+fn compress_monochrome_pixels_into_bits(pixels: &[u8]) -> Vec<u8> {
+    let chunk_size: usize = 8;
+    assert!(pixels.len() % chunk_size == 0);
+    let chunk_count: usize = pixels.len() / chunk_size;
+
+    let mut chunks = Vec::<u8>::new();
+
+    for chunk_index in 0..chunk_count {
+        let mut chunk = 0;
+        for bit_index in 0..chunk_size {
+            let pixel = pixels[chunk_index * chunk_size + bit_index];
+            chunk = if pixel == 0x00 {
+                chunk << 1
+            } else {
+                (chunk << 1) | 1
+            };
+        }
+        chunks.push(chunk);
+    }
+
+    chunks
+}
+
 fn compress_bytes_with_custom_rle(bytes: &[u8]) -> Vec<u8> {
     let mut result = Vec::<_>::new();
 
@@ -93,8 +116,8 @@ impl Format {
 }
 
 fn main() {
-    const IMAGE_WIDTH: i32 = 128;
-    const IMAGE_HEIGHT: i32 = 64;
+    const IMAGE_WIDTH: usize = 128;
+    const IMAGE_HEIGHT: usize = 64;
 
     let (file_path, format) = {
         let mut file_path: Option<String> = None;
@@ -141,7 +164,7 @@ fn main() {
         }
     };
 
-    let pixels = unsafe {
+    let pixels: &[u8] = unsafe {
         let (mut w, mut h) = (0, 0);
         let file_path_cstr = CString::new(file_path.clone())
             .expect("Could not construct CString out of the provided file path");
@@ -152,36 +175,17 @@ fn main() {
             panic!("Could not read file {}", file_path);
         }
 
-        if w != IMAGE_WIDTH || h != IMAGE_HEIGHT {
+        if w != IMAGE_WIDTH as i32 || h != IMAGE_HEIGHT as i32 {
             panic!("Expected image of size {}x{} but got {}x{}",
                    IMAGE_WIDTH, IMAGE_HEIGHT,
                    w, h);
         }
 
-        pixels
+        std::slice::from_raw_parts(pixels, IMAGE_WIDTH * IMAGE_HEIGHT)
     };
 
-    const CHUNK_SIZE: i32 = 8;
-    const CHUNK_COUNT: i32 = IMAGE_WIDTH * IMAGE_HEIGHT / CHUNK_SIZE;
-
-    let mut chunks: [u8; CHUNK_COUNT as usize] = [0; CHUNK_COUNT as usize];
-
-    for chunk_index in 0..CHUNK_COUNT {
-        let chunk = &mut chunks[chunk_index as usize];
-        for bit_index in 0..CHUNK_SIZE {
-            let pixel = unsafe {
-                *pixels.offset((chunk_index * CHUNK_SIZE + bit_index) as isize)
-            };
-
-            *chunk = if pixel == 0x00 {
-                *chunk << 1
-            } else {
-                (*chunk << 1) | 1
-            };
-        }
-    }
-
-    let compressed_bytes = compress_bytes_with_custom_rle(&chunks);
+    let compressed_bytes = compress_bytes_with_custom_rle(
+        &compress_monochrome_pixels_into_bits(pixels));
 
     match format {
         Format::Rust => {

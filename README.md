@@ -13,8 +13,12 @@ Originally created for my experimental [rust-browser-game](https://github.com/ts
 
 ## Compression comparison with PNG
 
-<!-- TODO: Document Compression comparison with PNG -->
-TBD
+| File Name                                                          | Original PNG size (bytes) | Size of `./fontgen -f bin` output (bytes) |
+| ---                                                                | ---                       | ---                                       |
+| [charmap-cellphone_white_0.png](./charmap-cellphone_white_0.png)   | 1103                      | 623                                       |
+| [charmap-futuristic_black_0.png](./charmap-futuristic_black_0.png) | 1070                      | 621                                       |
+| [charmap-oldschool_white.png](./charmap-oldschool_white.png)       | 1026                      | 622                                       |
+
 
 ## Compression/Decompression Algorithms
 

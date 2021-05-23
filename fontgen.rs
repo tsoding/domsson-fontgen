@@ -1,8 +1,17 @@
 use std::os::raw::{c_char, c_uchar};
 use std::ffi::CString;
+use std::fs::{File};
+use std::io::{BufWriter, Write};
 
 type Pixel = u8;
 const COMPS: i32 = 1;
+
+const IMAGE_WIDTH: usize = 128;
+const IMAGE_HEIGHT: usize = 64;
+const IMAGE_COLS: usize = 18;
+const IMAGE_ROWS: usize = 7;
+const IMAGE_CHAR_WIDTH: usize = IMAGE_WIDTH / IMAGE_COLS;
+const IMAGE_CHAR_HEIGHT: usize = IMAGE_HEIGHT / IMAGE_ROWS;
 
 #[link(name = "stb_image")]
 extern "C" {
@@ -92,10 +101,41 @@ fn pretty_print_bytes_as_rust_array(bytes: &[u8], row_size: usize, name: &str) {
     println!("];");
 }
 
+fn save_pixels_as_ppm(pixels: &mut[u8], file_path: &str) {
+    assert!(pixels.len() == IMAGE_WIDTH * IMAGE_HEIGHT);
+    let ppm_file = File::create(file_path)
+        .expect(&format!("Could not create file `{}`", file_path));
+    let mut ppm_writer = BufWriter::new(&ppm_file);
+    writeln!(&mut ppm_writer, "P6").unwrap();
+    writeln!(&mut ppm_writer, "{} {}", IMAGE_WIDTH, IMAGE_HEIGHT).unwrap();
+    writeln!(&mut ppm_writer, "255").unwrap();
+    for pixel in pixels {
+        ppm_writer.write(&[*pixel, *pixel, *pixel]).unwrap();
+    }
+}
+
+fn generate_solid_character(pixels: &mut [u8]) {
+    assert!(pixels.len() == IMAGE_WIDTH * IMAGE_HEIGHT);
+    let index = 126 - 32 + 1;
+    let x0 = (index % IMAGE_COLS) * IMAGE_CHAR_WIDTH;
+    let y0 = (index / IMAGE_COLS) * IMAGE_CHAR_HEIGHT;
+    for dy in 0..IMAGE_CHAR_HEIGHT {
+        for dx in 0..IMAGE_CHAR_WIDTH {
+            let x = x0 + dx;
+            let y = y0 + dy;
+            assert!((0..IMAGE_WIDTH).contains(&x));
+            assert!((0..IMAGE_HEIGHT).contains(&y));
+            pixels[y * IMAGE_WIDTH + x] = 0xFF;
+        }
+    }
+}
+
 fn usage() {
     eprintln!("Usage: ./fontgen [OPTIONS] <bitmap-font-spritesheet.png>");
     eprintln!("OPTIONS:");
-    eprintln!("    -f <rust|c|bin>         Output format of the compressed font");
+    eprintln!("    -solid           Generate an additional character with solid color");
+    eprintln!("    -debug           Save the modified image as `debug.ppm` for debugging purposes");
+    eprintln!("    -f <rust|c|bin>  Output format of the compressed font");
 }
 
 enum Format {
@@ -116,12 +156,12 @@ impl Format {
 }
 
 fn main() {
-    const IMAGE_WIDTH: usize = 128;
-    const IMAGE_HEIGHT: usize = 64;
 
-    let (file_path, format) = {
+    let (file_path, format, solid, debug) = {
         let mut file_path: Option<String> = None;
         let mut format = Format::Rust;
+        let mut solid = false;
+        let mut debug = false;
 
         let mut args = std::env::args();
         args.next(); // skip program;
@@ -143,7 +183,15 @@ fn main() {
                         eprintln!("ERROR: No argument is provided for flag `{}`", flag);
                         std::process::exit(1);
                     }
-                },
+                }
+
+                "-solid" => {
+                    solid = true;
+                }
+
+                "-debug" => {
+                    debug = true;
+                }
 
                 _ => if file_path.is_some() {
                     usage();
@@ -156,7 +204,7 @@ fn main() {
         }
 
         if let Some(file_path) = file_path {
-            (file_path, format)
+            (file_path, format, solid, debug)
         } else {
             usage();
             eprintln!("ERROR: No input file path was provided");
@@ -164,7 +212,7 @@ fn main() {
         }
     };
 
-    let pixels: &[u8] = unsafe {
+    let pixels: &mut [u8] = unsafe {
         let (mut w, mut h) = (0, 0);
         let file_path_cstr = CString::new(file_path.clone())
             .expect("Could not construct CString out of the provided file path");
@@ -181,8 +229,16 @@ fn main() {
                    w, h);
         }
 
-        std::slice::from_raw_parts(pixels, IMAGE_WIDTH * IMAGE_HEIGHT)
+        std::slice::from_raw_parts_mut(pixels, IMAGE_WIDTH * IMAGE_HEIGHT)
     };
+
+    if solid {
+        generate_solid_character(pixels);
+    }
+
+    if debug {
+        save_pixels_as_ppm(pixels, "debug.ppm");
+    }
 
     let compressed_bytes = compress_bytes_with_custom_rle(
         &compress_monochrome_pixels_into_bits(pixels));
@@ -194,7 +250,6 @@ fn main() {
             pretty_print_bytes_as_rust_array(&compressed_bytes, 16, "COMPRESSED_FONT");
         }
         Format::Bin => {
-            use std::io::Write;
             std::io::stdout().write(&compressed_bytes).expect("Could not output compressed bytes to stdout");
         }
         Format::C => {

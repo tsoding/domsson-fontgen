@@ -135,6 +135,7 @@ fn usage() {
     eprintln!("OPTIONS:");
     eprintln!("    -solid           Generate an additional character with solid color");
     eprintln!("    -debug           Save the modified image as `debug.ppm` for debugging purposes");
+    eprintln!("    -raw             Do not apply any compression to the font");
     eprintln!("    -f <rust|c|bin>  Output format of the compressed font");
 }
 
@@ -157,11 +158,12 @@ impl Format {
 
 fn main() {
 
-    let (file_path, format, solid, debug) = {
+    let (file_path, format, solid, debug, raw) = {
         let mut file_path: Option<String> = None;
         let mut format = Format::Rust;
         let mut solid = false;
         let mut debug = false;
+        let mut raw = false;
 
         let mut args = std::env::args();
         args.next(); // skip program;
@@ -193,6 +195,10 @@ fn main() {
                     debug = true;
                 }
 
+                "-raw" => {
+                    raw = true;
+                }
+
                 _ => if file_path.is_some() {
                     usage();
                     eprintln!("ERROR: Only one input file is supported right now");
@@ -204,7 +210,7 @@ fn main() {
         }
 
         if let Some(file_path) = file_path {
-            (file_path, format, solid, debug)
+            (file_path, format, solid, debug, raw)
         } else {
             usage();
             eprintln!("ERROR: No input file path was provided");
@@ -240,8 +246,12 @@ fn main() {
         save_pixels_as_ppm(pixels, "debug.ppm");
     }
 
-    let compressed_bytes = compress_bytes_with_custom_rle(
-        &compress_monochrome_pixels_into_bits(pixels));
+    let compressed_bytes = if raw {
+        pixels.to_vec()
+    } else {
+        compress_bytes_with_custom_rle(
+            &compress_monochrome_pixels_into_bits(pixels))
+    };
 
     match format {
         Format::Rust => {

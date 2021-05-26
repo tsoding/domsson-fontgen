@@ -2,6 +2,8 @@ use std::os::raw::{c_char, c_uchar};
 use std::ffi::CString;
 use std::fs::{File};
 use std::io::{BufWriter, Write};
+use std::env::args;
+use std::process::exit;
 
 type Pixel = u8;
 const COMPS: i32 = 1;
@@ -145,6 +147,12 @@ enum Format {
     Bin
 }
 
+impl Default for Format {
+    fn default() -> Self {
+        Self::Rust
+    }
+}
+
 impl Format {
     fn from_name(name: &str) -> Option<Self> {
         match name {
@@ -156,16 +164,20 @@ impl Format {
     }
 }
 
-fn main() {
+#[derive(Default)]
+struct Config {
+    file_path: String,
+    format: Format,
+    solid: bool,
+    debug: bool,
+    raw: bool,
+}
 
-    let (file_path, format, solid, debug, raw) = {
-        let mut file_path: Option<String> = None;
-        let mut format = Format::Rust;
-        let mut solid = false;
-        let mut debug = false;
-        let mut raw = false;
+impl Config {
+    fn from_args(mut args: impl Iterator<Item = String>) -> Result<Self, String> {
+        let mut config = Config::default();
+        let mut file_path_set = false;
 
-        let mut args = std::env::args();
         args.next(); // skip program;
 
         while let Some(flag) = args.next() {
@@ -173,60 +185,63 @@ fn main() {
                 "-f" => {
                     if let Some(format_name) = args.next() {
                         if let Some(custom_format) = Format::from_name(&format_name) {
-                            format = custom_format;
+                            config.format = custom_format;
                         } else {
-                            usage();
-                            eprintln!("ERROR: `{}` is not a correct output format",
-                                      format_name);
-                            std::process::exit(1);
+                            return Err(format!("`{}` is not a correct output format", format_name));
                         }
                     } else {
-                        usage();
-                        eprintln!("ERROR: No argument is provided for flag `{}`", flag);
-                        std::process::exit(1);
+                        return Err(format!("No argument is provided for flag `{}`", flag));
                     }
                 }
 
                 "-solid" => {
-                    solid = true;
+                    config.solid = true;
                 }
 
                 "-debug" => {
-                    debug = true;
+                    config.debug = true;
                 }
 
                 "-raw" => {
-                    raw = true;
+                    config.raw = true;
                 }
 
-                _ => if file_path.is_some() {
-                    usage();
-                    eprintln!("ERROR: Only one input file is supported right now");
-                    std::process::exit(1);
+                _ => if file_path_set {
+                    return Err(format!("Only one input file is supported right now"));
                 } else {
-                    file_path = Some(flag);
+                    config.file_path = flag;
+                    file_path_set = true;
                 }
             }
         }
 
-        if let Some(file_path) = file_path {
-            (file_path, format, solid, debug, raw)
+        if file_path_set {
+            Ok(config)
         } else {
+            Err(format!("No input file path was provided"))
+        }
+    }
+}
+
+fn main() {
+    let config = match Config::from_args(args()) {
+        Ok(config) => config,
+        Err(message) => {
             usage();
-            eprintln!("ERROR: No input file path was provided");
-            std::process::exit(1);
+            eprintln!("ERROR: {}", message);
+            exit(1);
         }
     };
 
     let pixels: &mut [u8] = unsafe {
         let (mut w, mut h) = (0, 0);
-        let file_path_cstr = CString::new(file_path.clone())
+        let file_path_cstr = CString::new(config.file_path.clone())
             .expect("Could not construct CString out of the provided file path");
         let pixels =
             stbi_load(file_path_cstr.into_raw(), &mut w, &mut h, std::ptr::null_mut(), COMPS) as *mut Pixel;
 
         if pixels == std::ptr::null_mut() {
-            panic!("Could not read file {}", file_path);
+            panic!("Could not read file {}", config.file_path);
         }
 
         if w != IMAGE_WIDTH as i32 || h != IMAGE_HEIGHT as i32 {
@@ -238,25 +253,25 @@ fn main() {
         std::slice::from_raw_parts_mut(pixels, IMAGE_WIDTH * IMAGE_HEIGHT)
     };
 
-    if solid {
+    if config.solid {
         generate_solid_character(pixels);
     }
 
-    if debug {
+    if config.debug {
         save_pixels_as_ppm(pixels, "debug.ppm");
     }
 
-    let compressed_bytes = if raw {
+    let compressed_bytes = if config.raw {
         pixels.to_vec()
     } else {
         compress_bytes_with_custom_rle(
             &compress_monochrome_pixels_into_bits(pixels))
     };
 
-    match format {
+    match config.format {
         Format::Rust => {
             println!("// Copy-paste this into your code");
-            println!("// Generated by https://github.com/tsoding/domsson-fontgen from `{}`", file_path);
+            println!("// Generated by https://github.com/tsoding/domsson-fontgen from `{}`", config.file_path);
             pretty_print_bytes_as_rust_array(&compressed_bytes, 16, "COMPRESSED_FONT");
         }
         Format::Bin => {
@@ -264,7 +279,7 @@ fn main() {
         }
         Format::C => {
             println!("// Copy-paste this into your code");
-            println!("// Generated by https://github.com/tsoding/domsson-fontgen from `{}`", file_path);
+            println!("// Generated by https://github.com/tsoding/domsson-fontgen from `{}`", config.file_path);
             pretty_print_bytes_as_c_array(&compressed_bytes, 16, "COMPRESSED_FONT");
         }
     }
